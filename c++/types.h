@@ -1,6 +1,6 @@
 #pragma once
 
-template <typename T>
+template <class T>
 struct maybe {
 	T value;
 	bool valid;
@@ -30,4 +30,11 @@ typedef struct {
 
 } nill;
 
+template <class K, class V>
+struct noop {
+  typedef bool aug_t;
+  static aug_t get_empty() { return 0;}
+  static aug_t from_entry(K a, V b) { return 0;}
+  static aug_t combine(aug_t a, aug_t b) { return 0;}
+};
 

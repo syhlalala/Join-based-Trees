@@ -1,63 +1,67 @@
 #pragma once
 
-#include "tree_map.h"
-#include "set_operations.h"
+#include "augmented_map.h"
+#include "tree_operations.h"
 
-template<typename K>
+template<class K>
 class tree_set;
 
-template<typename K>
+template<class K>
 tree_set<K> set_union(tree_set<K>&, tree_set<K>&);
 
-template<typename K>
+template<class K>
 tree_set<K> set_intersect(tree_set<K>&, tree_set<K>&);
 
-template<typename K>
+template<class K>
 tree_set<K> set_difference(tree_set<K>&, tree_set<K>&);
 
-template<typename K>
+template<class K>
 tree_set<K>& final(tree_set<K>&);
 
-
-template <typename K>
+template <class K>
 class tree_set {
 public:
-    typedef K                           key_type;
-    typedef maybe<K>                    maybe_key;
-    typedef TreeNode<K, nill>           node_type;
-    typedef tree_set<K>                 set_type;
-    typedef pair<set_type, set_type>    set_pair;
-    typedef node_allocator<node_type>   allocator;
+    typedef K                                        key_type;
+    typedef maybe<K>                                 maybe_key;
+    typedef tree_set<K>                              set_type;
+    typedef tree_map<K, nill>                        map_type;
+    typedef std::pair<set_type, set_type>            set_pair;
+    typedef typename tree_map<K, nill>::node_type    node_type;
+    typedef typename tree_map<K, nill>::allocator    allocator;                
 
     tree_set();
+    tree_set(const key_type&);
     tree_set(const tree_set<key_type>& m);
+    //tree_set(const Iterator, const Iterator, const bool is_sorted = false);
+
     ~tree_set();
     
-    int size() const;
+    size_t size() const;
     void clear();
     bool empty();
     
-    template<typename Iterator>
+    template<class Iterator>
     void build(const Iterator begin, const Iterator end);
     
-    template<typename OutIterator>
+    template<class OutIterator>
     void content(OutIterator);
+	node_type* get_root() { return m.root; }
     
     bool find(const key_type&);
     
     maybe_key next(const key_type&);
     maybe_key previous(const key_type&);
     
-    int rank(const key_type&);
-    key_type select(int);
+    size_t rank(const key_type&);
+    key_type select(size_t);
     
     void insert(const key_type&);
-    bool remove(const key_type&);
+    void remove(const key_type&);
     
     set_type range(key_type, key_type);
     set_pair split(const key_type&);
     
-    template<typename Func>
+    template<class Func>
     set_type filter(const Func&);
     
     friend set_type& final<K>(set_type&);
@@ -71,34 +75,39 @@ public:
     static void finish();
     
     set_type& operator = (const set_type& s);
-    
+	
+	template<class OutIterator>
+    static void collect_entries(const node_type*, OutIterator&);
     
 private:
-    template<typename Iterator>
+    template<class Iterator>
     node_type* construct(const Iterator, const Iterator);
 
-    template<typename OutIterator>
-    void collect_entries(const node_type*, OutIterator&);
-
-    tree_map<K, nill> _set;
+    tree_map<K, nill> m;
 };
 
-template<typename K>
+template<class K>
 tree_set<K>::tree_set() {
-    _set.root = NULL;
+    m.root = NULL;
 }
 
-template<typename K>
+template<class K>
+tree_set<K>::tree_set(const key_type& k) {
+    m.root = new node_type(std::make_pair(k, nill()));
+}
+
+
+template<class K>
 tree_set<K>::tree_set(const set_type& s) {
-    _set = s._set;
+    m = s.m;
 }
 
-template<typename K>
+template<class K>
 tree_set<K>::~tree_set() {
-    _set.clear();
+    m.clear();
 }
 
-template<typename K>
+template<class K>
 void tree_set<K>::reserve(size_t n) {
     if (allocator::initialized) {
         allocator::reserve(n);
@@ -106,39 +115,39 @@ void tree_set<K>::reserve(size_t n) {
         allocator::init(n);
 }
 
-template<typename K>
+template<class K>
 void tree_set<K>::init() {
     if (!allocator::initialized) {
         allocator::init();
     }
 }
 
-template<typename K>
+template<class K>
 void tree_set<K>::finish() {
     if (allocator::initialized) {
         allocator::finish();
     }
 }
 
-template<typename K>
-int tree_set<K>::size() const {
-    return _set.size();
+template<class K>
+size_t tree_set<K>::size() const {
+    return m.size();
 }
 
-template<typename K>
+template<class K>
 bool tree_set<K>::empty() {
-    return _set.empty();
+    return m.empty();
 }
 
-template<typename K>
+template<class K>
 tree_set<K>& tree_set<K>::operator = (const set_type& s) {
-    _set = s._set;
+    m = s.m;
     return *this;
 }
 
-template<typename K>
+template<class K>
 bool tree_set<K>::find(const key_type& key) {
-    node_type* curr = _set.root;
+    node_type* curr = m.root;
     
     bool found = false;
     while (curr) {
@@ -155,8 +164,8 @@ bool tree_set<K>::find(const key_type& key) {
     return found;
 }
 
-template<typename K>
-template<typename OutIterator>
+template<class K>
+template<class OutIterator>
 void tree_set<K>::collect_entries(const node_type* curr, OutIterator& out) {
     if (!curr) return;
     
@@ -165,49 +174,49 @@ void tree_set<K>::collect_entries(const node_type* curr, OutIterator& out) {
     collect_entries(curr->rc, out);
 }
 
-template<typename K>
-template<typename OutIterator>
+template<class K>
+template<class OutIterator>
 void tree_set<K>::content(OutIterator out) {
-    collect_entries(_set.root, out);
+    collect_entries(m.root, out);
 }
 
-template<typename K>
+template<class K>
 maybe<K> tree_set<K>::next(const key_type& key) {
-    return _set.next(key);
+    return m.next(key);
 }
 
-template<typename K>
+template<class K>
 maybe<K> tree_set<K>::previous(const key_type& key) {
-    return _set.previous(key);
+    return m.previous(key);
 }
 
-template<typename K>
-int tree_set<K>::rank(const key_type& key) {
-    return _set.rank(key);
+template<class K>
+size_t tree_set<K>::rank(const key_type& key) {
+    return m.rank(key);
 }
 
-template<typename K>
-K tree_set<K>::select(int rank) {
-    return _set.select(rank);
+template<class K>
+K tree_set<K>::select(size_t rank) {
+    return m.select(rank);
 }
 
-template<typename K>
+template<class K>
 void tree_set<K>::insert(const key_type& key) {
-    _set.insert(make_pair(key, nill()));
+    m.insert(make_pair(key, nill()));
 }
 
-template<typename K>
-bool tree_set<K>::remove(const key_type& key) {
-    _set.remove(key);
+template<class K>
+void tree_set<K>::remove(const key_type& key) {
+    m.remove(key);
 }
 
-template<typename K>
+template<class K>
 void tree_set<K>::clear() {
-    _set.clear();
+    m.clear();
 }
 
-template<typename K>
-template<typename Iterator>
+template<class K>
+template<class Iterator>
 typename tree_set<K>::node_type* tree_set<K>::construct(const Iterator lo, const Iterator hi) {
     if (lo > hi)
         return NULL;
@@ -223,64 +232,64 @@ typename tree_set<K>::node_type* tree_set<K>::construct(const Iterator lo, const
     return t_union(l, r, get_left<nill>());
 }
 
-template<typename K>
+template<class K>
 tree_set<K>& final(tree_set<K>& s) {
-    final(s._set);
+    final(s.m);
+    return s;
 }
 
-template<typename K>
-template<typename Iterator>
+template<class K>
+template<class Iterator>
 void tree_set<K>::build(const Iterator begin, const Iterator end) {
     clear();
     
     if (begin != end)
-        _set.root = construct(begin, end-1);
+        m.root = construct(begin, end-1);
 }
 
-template<typename K>
+template<class K>
 tree_set<K> tree_set<K>::range(key_type low, key_type high) {
     tree_set<K> ret;
-    ret._set = _set.range(low, high);
+    ret.m = m.range(low, high);
     return ret;
 }
 
-template<typename K>
-pair<tree_set<K>, tree_set<K> > tree_set<K>::split(const key_type& key) {
-    pair<tree_map<K, nill>, tree_map<K, nill> > maps = _set.split(key);
+template<class K>
+std::pair<tree_set<K>, tree_set<K> > tree_set<K>::split(const key_type& key) {
+    std::pair<map_type, map_type> maps = m.split(key);
     
     tree_set<K> s1, s2;
-    s1._set = maps.first;
-    s2._set = maps.second;
+    s1.m = maps.first;
+    s2.m = maps.second;
     
     return make_pair(s1, s2); 
 }
 
-template<typename K>
-template<typename Func>
+template<class K>
+template<class Func>
 tree_set<K> tree_set<K>::filter(const Func& f) {
     tree_set<K> ret;
-    ret._set = _set.filter([f] (pair<K, nill> p) { return f(p.first); });
+    ret.m = m.filter([f] (std::pair<K, nill> p) { return f(p.first); });
     return ret;
 }
 
-template<typename K>
+template<class K>
 tree_set<K> set_union(tree_set<K>& s1, tree_set<K>& s2) {
     tree_set<K> ret;
-    ret._set = map_union(s1._set, s2._set);
+    ret.m = map_union(s1.m, s2.m);
     return ret;
 }
 
-template<typename K>
+template<class K>
 tree_set<K> set_intersect(tree_set<K>& s1, tree_set<K>& s2) {
     tree_set<K> ret;
-    ret._set = map_intersect(s1._set, s2._set);
+    ret.m = map_intersect(s1.m, s2.m);
     return ret;
 }
 
-template<typename K>
+template<class K>
 tree_set<K> set_difference(tree_set<K>& s1, tree_set<K>& s2) {
     tree_set<K> ret;
-    ret._set = map_difference(s1._set, s2._set);
+    ret.m = map_difference(s1.m, s2.m);
     return ret;
 }
-

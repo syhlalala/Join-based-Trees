@@ -1,348 +1,288 @@
 #pragma once
 
-#include "tree_map.h"
-#include "set_operations.h"
+#include "tree_operations.h"
+#include <vector>
+#include "types.h"
+#include <typeinfo>
+#include "common.h"
+#include "pbbs-include/get_time.h"
+#include "pbbs-include/sample_sort.h"
 
-template<typename K, typename V, typename AugmOp>
-using AugmentedNode = AugmentedAVLNode<K, V, AugmOp>;
+using namespace std;
 
-template<typename K, typename V, typename AugmOp>
+template<class K, class V, class AugmOp, class Compare>
 class augmented_map;
 
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> map_union(augmented_map<K, V, AugmOp>&, augmented_map<K, V, AugmOp>&);
+template<class K, class V, class Compare = std::less<K> >
+using tree_map = augmented_map<K, V, noop<K,V>, Compare>;
 
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> map_intersect(augmented_map<K, V, AugmOp>&, augmented_map<K, V, AugmOp>&);
+template<class K>
+class tree_set;
 
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> map_difference(augmented_map<K, V, AugmOp>&, augmented_map<K, V, AugmOp>&);
+template<class amap> amap map_union(amap, amap);
+template<class amap> amap map_intersect(amap, amap);
+template<class amap> amap map_difference(amap, amap);
 
-template<typename K, typename V, typename AugmOp, typename BinaryOp>
-augmented_map<K, V, AugmOp> map_union(augmented_map<K, V, AugmOp>&, augmented_map<K, V, AugmOp>&, BinaryOp);
+template<class amap, class BinaryOp>
+amap map_union(amap, amap, const BinaryOp&);
 
-template<typename K, typename V, typename AugmOp, typename BinaryOp>
-augmented_map<K, V, AugmOp> map_intersect(augmented_map<K, V, AugmOp>&, augmented_map<K, V, AugmOp>&, BinaryOp);
+template<class amap, class BinaryOp>
+amap map_intersect(amap, amap, const BinaryOp& f);
 
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp>& final(augmented_map<K, V, AugmOp>&);
+template <class K, class V, class AugmOp, class Compare = std::less<K> >
+class augmented_map {
+ public:
+    typedef K                                     key_type;
+    typedef V                                     value_type;
+    typedef std::pair<K,V>                        entry_type;
+    typedef maybe<K>                              maybe_key;
+    typedef maybe<V>                              maybe_value;
+    typedef maybe<entry_type>                     maybe_entry;
+    typedef typename AugmOp::aug_t                aug_type;
+    typedef std::pair<K, V>                       tuple;
+    typedef node<K, V, AugmOp, Compare>           node_type;
+    typedef typename node_type::tree_type         tree_type;
+    typedef augmented_map<K, V, AugmOp, Compare>  map_type;
+    typedef std::pair<map_type, map_type>         map_pair;
+    typedef tree_operations<node_type>            tree_ops;
+    typedef typename node_type::allocator         allocator;
+    typedef typename tree_ops::split_info         split_info;
+    typedef Compare                               compare_type;
 
+    // empty constructor
+    augmented_map() : root(NULL) { allocator::init(); }
 
-template <typename K, typename V, typename AugmOp>
-class augmented_map : public tree_map<K, V> {
-public:
-    typedef K                               key_type;
-    typedef V                               value_type;
-    typedef maybe<K>                        maybe_key;
-    typedef maybe<V>                        maybe_value;
-    typedef AugmOp                          operator_type;
-    typedef pair<K, V>                      tuple;
-    typedef AugmentedNode<K, V, AugmOp>     node_type;
-    typedef augmented_map<K, V, AugmOp>     map_type;
-    typedef pair<map_type, map_type>        map_pair;
-    typedef node_allocator<node_type>       allocator;
+    // copy constructor, increment reference counce
+    augmented_map(const map_type& m) {root = m.root; increase(root);}
 
-    operator_type reduce_operator;
+    // move constructor, clear the source, leave reference count as is
+    augmented_map(map_type&& m) { root = m.root; m.root = NULL;}
 
-    augmented_map() : reduce_operator(AugmOp()) {}
-    augmented_map(const map_type& m);
-    ~augmented_map();
+    // singleton
+    augmented_map(const entry_type& e) { 
+        allocator::init();
+        root = new node_type(e);
+    }
     
-    void clear();
-    void insert(const tuple&);
+    // construct from an array keeping one of the equal keys
+    augmented_map(entry_type* s, entry_type* e, 
+		  bool is_sorted = false,
+		  bool sequential = false) : root(NULL) {
+      allocator::init();
+      multi_insert(s, e, is_sorted, sequential);
+    }
 
-    void normal_insert(const tuple&);
-    
-    template<typename Iterator>
-    void build(const Iterator begin, const Iterator end);
+    // construct from an array with combining of equal keys
+    template<class Combine>
+    augmented_map(entry_type* s, entry_type* e, const Combine& f, 
+		  bool is_sorted = false, bool sequential = false) : root(NULL) {
+      allocator::init();
+      multi_insert(s, e, f, is_sorted, sequential);
+    }
 
-    template<typename Iterator>
-    void build_fast(const Iterator begin, const Iterator end);
+    // clears contents, decrementing ref counts
+    void clear() {
+      if (allocator::initialized) decrease_recursive(root);
+      root = NULL;
+    }
 
-    map_type range(key_type, key_type);
-    map_pair split(const key_type&);
+    // destruct.   
+    ~augmented_map() { clear(); }
 
-    template<typename Func>
-    map_type filter(const Func&);
-    
-    V accumulate(const key_type&);
-    
-    friend map_type& final<K, V, AugmOp>(map_type&);
-    
-    friend map_type map_union<K, V, AugmOp>(map_type&, map_type&);
-    friend map_type map_difference<K, V, AugmOp>(map_type&, map_type&);
-    friend map_type map_intersect<K, V, AugmOp>(map_type&, map_type&);
-    
-    template<typename A, typename B, typename C, typename BinaryOp>
-    friend augmented_map<A, B, C> 
-    map_union(augmented_map<A, B, C>&, augmented_map<A, B, C>&, BinaryOp);
+    // copy assignment, increase reference count
+    map_type& operator = (const map_type& m) {
+      if (this != &m) { clear(); root = m.root; increase(root); }
+      return *this;
+    }
 
-    template<typename A, typename B, typename C, typename BinaryOp>
-    friend augmented_map<A, B, C> 
-    map_intersect(augmented_map<A, B, C>&, augmented_map<A, B, C>&, BinaryOp);
-    
-    static void init();
-    static void reserve(size_t n);
-    static void finish();
-    
-    map_type& operator = (const map_type& k);
-    
+    // move assignment, clear the source, leave reference count as is
+    map_type& operator = (map_type&& m){
+      if (this != &m) { clear(); root = m.root; m.root = NULL;}
+      return *this; 
+    }
 
-private:
-    template<typename Iterator>
-    typename tree_map<K, V>::node_type* fast_construct(const Iterator begin, const Iterator end);
+    // some basic functions
+    size_t size() const { return get_node_count(root); }
+    void insert(const tuple& p) { root = tree_ops::t_insert(root, p); }
+    void remove(const key_type& k) { root = tree_ops::t_delete(root, k); }
+    bool empty() {return root == NULL;}
 
-    template<typename Iterator>
-    typename tree_map<K, V>::node_type* construct(const Iterator begin, const Iterator end);
+    // filters elements that satisfy the predicate when applied
+    // to the key-value pair.   To keep old version asssign to another var.
+    template<class Func>
+    void filter(const Func& f) { root = tree_ops::t_filter(root, f); }
+
+    // insert multiple keys from an array
+    void multi_insert(entry_type* s, entry_type* e, 
+		      bool is_sorted = false, bool sequential = false) {
+      root = tree_ops::multi_insert(root, s, e-s, is_sorted, sequential);}
+
+    // insert multiple keys from an array with an associative combiner
+    template<class Combine>
+    void multi_insert(entry_type* s, entry_type* e, const Combine& f, 
+		      bool is_sorted = false, bool sequential = false) {
+      root = tree_ops::multi_insert(root, s, e-s, f, is_sorted, sequential);}
+
+    // build a new tree with a reduction function for combining duplicates
+    template<class Vin, class Reduce>
+    void build_reduce(std::pair<K,Vin>* s, std::pair<K,Vin>* e,
+		      const Reduce& reduce, bool is_sorted = false) {
+      clear();
+      root = tree_ops::build_reduce(s, e-s, reduce, is_sorted);}
+
+    // basic search routines
+    maybe_value find(const key_type& key) const {
+      return node_to_val(tree_ops::t_find(root, key));}
+    bool contains(const key_type& key) const {
+      return (tree_ops::t_find(root, key) != NULL) ? true : false;}
+    maybe_entry next(const key_type& key) const {
+      return node_to_entry(tree_ops::t_next(root, key));}
+    maybe_entry previous(const key_type& key) const {
+      return node_to_entry(tree_ops::t_previous(root, key));}
+
+    // rank and select
+    size_t rank(const key_type& key) { return tree_ops::t_rank(root, key);}
+    entry_type select(const size_t rank) const {
+      const node_type* n = tree_ops::t_select(this->root, rank);
+      return (n == NULL) ? entry_type() : n->get_entry();
+    }
+
+    // equality 
+    bool operator == (const map_type& m) const {
+      return (size() == m.size()) && (size() == map_union(*this,m).size());
+    }
+    bool operator != (const map_type& m) const { return !(*this == m); }
+
+    // extract the augmented values
+    aug_type aug_val() {return root->aug_val;}
+    aug_type aug_left (const key_type& key) {
+        return tree_ops::report_left(root, key);};
+    aug_type aug_right(const key_type& key) {
+        return tree_ops::report_right(root, key);};
+    aug_type aug_range(const key_type& key_left, const key_type& key_right) {
+        return tree_ops::report_range(root, key_left, key_right);};
+
+    template <class Func>
+    maybe_entry aug_select(Func f) {
+      return node_to_entry(tree_ops::aug_select(root, f));};
+
+    // union, intersection and difference
+    template<class amap> friend amap map_union(amap, amap);
+    template<class amap> friend amap map_difference(amap, amap);
+    template<class amap> friend amap map_intersect(amap, amap);
+    template<class amap, class BinaryOp>
+    friend amap map_union(amap, amap, const BinaryOp&);
+    template<class amap, class BinaryOp>
+    friend amap map_intersect(amap, amap, const BinaryOp&);
+
+    map_type range(const key_type& low, const key_type& high) {
+      increase(this->root);
+      return tree_ops::t_range(root, low, high);
+    }
+
+    map_pair split(const key_type& key) {
+      split_info split = tree_ops::t_split(this->root, key);
+      return std::make_pair(map_type(split.first), map_type(split.second));
+    }
+
+    // extract entries from the map sequentially into an output iterator
+    template<class OutIterator>
+    void content(OutIterator out) const {
+      auto get = [] (node_type* t) { return t->get_entry(); };
+      tree_ops::t_collect_seq(root, out, get);}
+
+    // extract entries from the map in parallel into an array
+    entry_type* entries(entry_type* out) const {
+      auto get = [] (node_type* t) { return t->get_entry(); };
+      return tree_ops::t_collect(root, out, get);}
+
+    // extract keys from the map
+    template<class OutIterator>
+    void keys(OutIterator out) const {
+      auto get = [] (const node_type* t) -> key_type { return t->get_key();};
+      tree_ops::t_collect_seq(root, out, get);}
+
+    // initializing, reserving and finishing
+    static void init() { allocator::init(); }
+    static void reserve(size_t n, bool randomize=false) {
+      allocator::reserve(n, randomize);};
+    static void finish() { allocator::finish(); }
+  
+    // some memory statistics
+    static size_t num_allocated_nodes() {
+        return allocator::num_allocated_blocks();}
+    static size_t num_used_nodes(){
+        return allocator::num_used_blocks();}
+    static size_t node_size () {
+        return allocator::block_size();}
+    static void print_allocation_stats() { 
+      print_stats<node_type>();}
+    
+    struct split_t {
+      split_t(node_type* left, node_type* right,
+          key_type key, value_type val) 
+      : left(map_type(left)), right(map_type(right)),
+    key(key), val(val) {};
+      map_type left;
+      map_type right;
+      key_type key;
+      value_type val;
+    };
+
+    split_t split_mid() {
+      assert(root != NULL);
+      increase(root->lc);
+      increase(root->rc);
+      return split_t(root->lc, root->rc, root->get_key(), root->get_value());
+    }
+
+    node_type* get_root() {return root;}
+    friend class tree_set<K>;
+
+ private:
+
+    augmented_map(node_type* r) : root(r) {};
+    
+    maybe_value node_to_val(node_type* a) const {
+      if (a != NULL) return maybe_value(a->get_value());
+      else return maybe_value();
+    }
+ 
+   maybe_entry node_to_entry(node_type* a) const {
+      if (a != NULL) return maybe_entry(a->get_entry());
+      else return maybe_entry();
+    }
+
+    template<class OutIterator, class DataOut>
+    void collect(const node_type*, OutIterator&, const DataOut&) const;
+
+    node_type* move_root() {node_type* t = root; root = NULL; return t;};
+
+    node_type* root;
 };
 
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp>::~augmented_map() {
-    this->clear();
-    this->root = NULL;
+template<class map>
+map map_union(map m1, map m2) {
+  return map_union(move(m1), move(m2), get_left<typename map::value_type>());
 }
 
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp>::augmented_map(const map_type& m) : tree_map<K, V>(m) {
-    reduce_operator = m.reduce_operator;
+template<class map>
+map map_intersect(map m1, map m2) {
+  return map_intersect(move(m1), move(m2), get_left<typename map::value_type>());
 }
 
-template<typename K, typename V, typename AugmOp>
-void augmented_map<K, V, AugmOp>::reserve(size_t n) { 
-    if (allocator::initialized) {
-        allocator::reserve(n);
-    } else  
-        allocator::init(n);
+template<class map, class BinaryOp>
+map map_union(map m1, map m2, const BinaryOp& op) {
+  return map(map::tree_ops::t_union(m1.move_root(), m2.move_root(), op));
 }
 
-template<typename K, typename V, typename AugmOp>
-void augmented_map<K, V, AugmOp>::init() { 
-    if (!allocator::initialized) {
-        allocator::init();
-    }
+template<class map, class BinaryOp>
+map map_intersect(map m1, map m2, const BinaryOp& op) {
+  return map(map::tree_ops::t_intersect(m1.move_root(), m2.move_root(), op));
 }
 
-template<typename K, typename V, typename AugmOp>
-void augmented_map<K, V, AugmOp>::finish() { 
-    if (allocator::initialized) {
-        allocator::finish();
-    }
+template<class map>
+map map_difference(map m1, map m2) {
+  return map(map::tree_ops::t_difference(m1.move_root(), m2.move_root()));
 }
-
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp>& augmented_map<K, V, AugmOp>::operator = (const map_type& m) {
-    tree_map<K, V>::operator =(m);
-    return *this;
-}
-
-template<typename K, typename V, typename AugmOp>
-void augmented_map<K, V, AugmOp>::insert(const tuple& p) {
-    split_info< typename tree_map<K, V>::node_type > split = t_split(this->root, p.first);  
-    this->root = t_join(split.first, split.second, new node_type(p));
-}
-
-template<typename K, typename V, typename AugmOp>
-void augmented_map<K, V, AugmOp>::normal_insert(const tuple& p) {
-    this->root = t_insert(this->root, new node_type(p));
-}
-
-
-template<typename K, typename V, typename AugmOp>
-template<typename Iterator>
-typename tree_map<K, V>::node_type* augmented_map<K, V, AugmOp>::construct(const Iterator lo, const Iterator hi) {
-    if (lo > hi)
-        return NULL;
-    if (lo == hi) 
-        return new node_type(*lo);
-    
-    const Iterator mid = lo + (std::distance(lo, hi) >> 1);
-    
-    typename tree_map<K, V>::node_type* l = cilk_spawn this->construct(lo, mid);
-    typename tree_map<K, V>::node_type* r = construct(mid+1, hi);
-    cilk_sync;
-    
-    return t_union(l, r, get_left<V>());
-}
-
-
-template<typename K, typename V, typename AugmOp>
-template<typename Iterator>
-typename tree_map<K, V>::node_type* augmented_map<K, V, AugmOp>::fast_construct(const Iterator lo, const Iterator hi) {
-    if (lo > hi)
-        return NULL;
-    if (lo == hi) 
-        return new node_type(*lo);
-    
-    const Iterator mid = lo + (std::distance(lo, hi) >> 1);
-    
-    typename tree_map<K, V>::node_type* m = new node_type(*mid);
-    typename tree_map<K, V>::node_type* l = cilk_spawn this->fast_construct(lo, mid-1);
-    typename tree_map<K, V>::node_type* r = fast_construct(mid+1, hi);
-    cilk_sync;
-    
-    return t_join(l, r, m);
-}
-
-template<typename K, typename V, typename AugmOp>
-template<typename Iterator>
-void augmented_map<K, V, AugmOp>::build_fast(const Iterator begin, const Iterator end) {
-#ifdef GLIBCXX_PARALLEL
-    clear();
-    __gnu_parallel::sort(begin, end);
-    if (begin != end)
-      this->root = fast_construct(begin, end-1);
-#else
-    build(begin, end);
-#endif
-}
-
-
-template<typename K, typename V, typename AugmOp>
-template<typename Iterator>
-void augmented_map<K, V, AugmOp>::build(const Iterator begin, const Iterator end) {
-    clear();
-    
-    if (begin != end) {
-        this->root = construct(begin, end-1);
-   }
-}
-
-template<typename K, typename V, typename AugmOp>
-V augmented_map<K, V, AugmOp>::accumulate(const key_type& key) {
-    typename tree_map<K, V>::node_type* curr = this->root;
-    
-    V ret{};
-    bool touch = 0;
-    
-    while (curr) {
-        if (curr->get_key() <= key) {
-            if (!touch){ 
-                ret = curr->get_value();
-                touch = 1;
-            } else
-                ret = reduce_operator(ret, curr->get_value());
-        
-            if (curr->lc) ret = reduce_operator(ret, ((node_type*)curr->lc)->accumulation);
-            curr = curr->rc;
-        } else 
-            curr = curr->lc;
-    }
-    
-    return ret;
-}
-
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp>& final(augmented_map<K, V, AugmOp>& m) {
-    m.tree_map<K, V>::destroy = true;
-    return m;
-}
-
-template<typename K, typename V, typename AugmOp>
-void augmented_map<K, V, AugmOp>::clear() {
-    if (allocator::initialized) {
-        decrease_recursive(this->root);
-    }       
-    this->root = NULL;
-    this->destroy = false;
-}
-
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> augmented_map<K, V, AugmOp>::range(key_type low, key_type high) {
-    increase(this->root);
-    
-    maybe_key prev_key = previous(low);
-    maybe_key next_key = next(high);
-    
-    if (prev_key) low = *prev_key;
-    if (next_key) high = *next_key;
-    
-    split_info<typename tree_map<K, V>::node_type> left_split = t_split(this->root, low);
-    decrease_recursive(left_split.first);
-    
-    split_info<typename tree_map<K, V>::node_type> right_split = t_split(left_split.second, high);
-    decrease_recursive(right_split.second);
-    
-    augmented_map<K, V, AugmOp> ret;
-    ret.tree_map<K, V>::root = right_split.first;
-    return ret;
-}
-
-template<typename K, typename V, typename AugmOp>
-pair<augmented_map<K, V, AugmOp>, augmented_map<K, V, AugmOp> > augmented_map<K, V, AugmOp>::split(const key_type& key) {
-    increase(this->root);
-    
-    split_info<typename tree_map<K, V>::node_type> split = t_split(this->root, key);
-    
-    augmented_map<K, V, AugmOp> ret_left, ret_right;
-    ret_left.tree_map<K, V>::root = split.first;
-    ret_right.tree_map<K, V>::root = split.second;
-    
-    return make_pair(ret_left, ret_right);
-}
-
-template<typename K, typename V, typename AugmOp>
-template<typename Func>
-augmented_map<K, V, AugmOp> augmented_map<K, V, AugmOp>::filter(const Func& f) {
-    increase(this->root);
-    
-    map_type ret;
-    ret.tree_map<K, V>::root = t_filter(this->root, f);
-    return ret;
-}
-
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> map_union(augmented_map<K, V, AugmOp>& m1, augmented_map<K, V, AugmOp>& m2) {
-    return map_union(m1, m2, get_left<V>());
-}
-
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> map_intersect(augmented_map<K, V, AugmOp>& m1, augmented_map<K, V, AugmOp>& m2) {
-    return map_intersect(m1, m2, get_left<V>());
-}
-
-template<typename K, typename V, typename AugmOp>
-augmented_map<K, V, AugmOp> map_difference(augmented_map<K, V, AugmOp>& m1, augmented_map<K, V, AugmOp>& m2) {
-    augmented_map<K, V, AugmOp> ret;
-    
-    if (!m1.tree_map<K, V>::destroy) increase(m1.tree_map<K, V>::root); 
-    if (!m2.tree_map<K, V>::destroy) increase(m2.tree_map<K, V>::root);
-    
-    ret.tree_map<K, V>::root = t_difference(m1.tree_map<K, V>::root, m2.tree_map<K, V>::root);
-    
-    if (m1.tree_map<K, V>::destroy) m1.tree_map<K, V>::root = NULL;
-    if (m2.tree_map<K, V>::destroy) m2.tree_map<K, V>::root = NULL;
-    
-    return ret;
-}
-
-template<typename K, typename V, typename AugmOp, typename BinaryOp>
-augmented_map<K, V, AugmOp> map_union(augmented_map<K, V, AugmOp>& m1, augmented_map<K, V, AugmOp>& m2, BinaryOp op) {
-    augmented_map<K, V, AugmOp> ret;
-    
-    if (!m1.tree_map<K, V>::destroy) increase(m1.tree_map<K, V>::root); 
-    if (!m2.tree_map<K, V>::destroy) increase(m2.tree_map<K, V>::root);
-    
-    ret.tree_map<K, V>::root = t_union(m1.tree_map<K, V>::root, m2.tree_map<K, V>::root, op);
-    
-    if (m1.tree_map<K, V>::destroy) m1.tree_map<K, V>::root = NULL;
-    if (m2.tree_map<K, V>::destroy) m2.tree_map<K, V>::root = NULL;
-    
-    return ret;
-}
-
-template<typename K, typename V, typename AugmOp, typename BinaryOp>
-augmented_map<K, V, AugmOp> map_intersect(augmented_map<K, V, AugmOp>& m1, augmented_map<K, V, AugmOp>& m2,  BinaryOp op) {
-    augmented_map<K, V, AugmOp> ret;
-    
-    if (!m1.tree_map<K, V>::destroy) increase(m1.tree_map<K, V>::root); 
-    if (!m2.tree_map<K, V>::destroy) increase(m2.tree_map<K, V>::root);
-        
-    ret.tree_map<K, V>::root = t_intersect(m1.tree_map<K, V>::root, m2.tree_map<K, V>::root, op);
-    
-    if (m1.tree_map<K, V>::destroy) m1.tree_map<K, V>::root = NULL;
-    if (m2.tree_map<K, V>::destroy) m2.tree_map<K, V>::root = NULL;
-    
-    return ret;
-}
-
 
